@@ -1,0 +1,6 @@
+.local/
+.venv/
+__pycache__/
+models/
+node_modules/
+*.log

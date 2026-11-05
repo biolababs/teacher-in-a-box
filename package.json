@@ -1,0 +1,9 @@
+{
+  "name": "teacher-in-a-box",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local AI classroom: diagnose, teach, fine-tune and independently evaluate robot skills.",
+  "scripts": {"start": "node server.mjs", "test": "node --test", "check": "node --check server.mjs && node --check public/app.js"},
+  "engines": {"node": ">=22"}
+}

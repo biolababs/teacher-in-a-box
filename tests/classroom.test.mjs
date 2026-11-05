@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import {TASKS,simulate,referencePlan,parsePlan,messages,fingerprint} from '../lib/classroom.mjs';
+import {localEndpoint,completion} from '../lib/lemonade.mjs';
+
+test('every reference plan solves its scene, including ordering constraints',()=>{assert.equal(TASKS.length,51);for(const t of TASKS)assert.equal(simulate(t,referencePlan(t)).passed,true,t.id);});
+test('all train, diagnostic and exam scenes are disjoint',()=>{assert.equal(new Set(TASKS.map(t=>fingerprint({initial:t.initial,goals:t.goals}))).size,TASKS.length);});
+test('simulation never mutates curriculum',()=>{const before=structuredClone(TASKS[0]);simulate(TASKS[0],referencePlan(TASKS[0]));assert.deepEqual(TASKS[0],before);});
+test('parsing accepts JSON fences but refuses prose and object-shaped commands',()=>{assert.deepEqual(parsePlan('```json\n[]\n```'),[]);assert.throws(()=>parsePlan('Here is your plan: []'));assert.throws(()=>parsePlan('{"actions":[]}'));});
+const task={initial:{robot:[0,0],blocks:{red:[0,0],blue:[2,2]},walls:[[1,0]]},goals:{red:[0,2]},redFirst:false};
+test('walls and board bounds fail rather than silently clipping',()=>{assert.match(simulate(task,[{op:'move',direction:'east'}]).error,/wall/);assert.match(simulate(task,[{op:'move',direction:'north'}]).error,/board/);});
+test('correct transport succeeds',()=>{const actions=[{op:'pick',block:'red'},{op:'move',direction:'south'},{op:'move',direction:'south'},{op:'drop'}];assert.equal(simulate(task,actions).passed,true);});
+test('pick, drop and unknown commands are validated',()=>{for(const a of [{op:'pick',block:'blue'},{op:'drop'},{op:'teleport'},{op:'move',direction:'north',hidden:1},null])assert.equal(simulate(task,[a]).passed,false);});
+test('sequence constraints are checked at action time',()=>{const t={...task,redFirst:true,initial:{...task.initial,robot:[2,2]}};assert.match(simulate(t,[{op:'pick',block:'blue'}]).error,/before/);});
+test('execution is bounded',()=>{assert.equal(simulate(task,Array(101).fill({op:'drop'})).passed,false);});
+test('few-shot baseline includes only training demonstrations',()=>{const t=TASKS.find(t=>t.split==='exam');const m=messages(t,'few-shot');assert.equal(m.length,8);for(let i=0;i<3;i++)assert.equal(m[2+i*2].content,JSON.stringify(referencePlan(TASKS[i])));});
+test('endpoint rejects remote hosts, credentials, redirects-by-scheme and query parameters',()=>{for(const u of ['https://example.com/v1','http://example.com/v1','http://127.0.0.1.evil.test','http://user:pass@localhost','file:///tmp/model','http://localhost/?x=1'])assert.throws(()=>localEndpoint(u));assert.equal(localEndpoint('http://localhost:13305/api/v1/'),'http://127.0.0.1:13305/api/v1');});
+test('real HTTP adapter preserves model, messages, and timing',async()=>{let received;const server=http.createServer(async(req,res)=>{let input='';for await(const c of req)input+=c;received=JSON.parse(input);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:'[]'}}],usage:{completion_tokens:2}}));});await new Promise(r=>server.listen(0,'127.0.0.1',r));try{const result=await completion(`http://127.0.0.1:${server.address().port}/v1`,'test-local-model',[{role:'user',content:'test'}]);assert.equal(received.model,'test-local-model');assert.equal(received.temperature,0);assert.equal(result.text,'[]');assert.ok(result.elapsedMs>=0);}finally{server.close();}});
+test('HTTP adapter does not follow a redirect to another destination',async()=>{const server=http.createServer((req,res)=>{res.writeHead(302,{Location:'https://example.com/'});res.end();});await new Promise(r=>server.listen(0,'127.0.0.1',r));try{await assert.rejects(()=>completion(`http://127.0.0.1:${server.address().port}`,'test',[]));}finally{server.close();}});
